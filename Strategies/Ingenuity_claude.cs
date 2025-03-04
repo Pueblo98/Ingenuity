@@ -22,902 +22,1070 @@ using NinjaTrader.NinjaScript.Indicators;
 using NinjaTrader.NinjaScript.DrawingTools;
 #endregion
 
+//This namespace holds Strategies in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Strategies
 {
     public class IngenuityStrategyClaude : Strategy
     {
-        #region Variables
-        private int lookbackPeriod = 20;       // Number of bars to look back for identifying swing points
-        private double atrMultiplier = 1.5;    // ATR multiplier for distance calculations
-        private double riskPercentage = 1.0;   // Risk percentage per trade
-        private double takeProfit1Percentage = 100; // First take profit as percentage of risk
-        private double takeProfit2Percentage = 200; // Second take profit as percentage of risk
-        private bool useHigherTimeframeLiquidity = true;
-        private bool useEQConfluence = true;
-        private bool useFVGConfirmation = true;
-        private bool useOrderBlockEntry = true;
-
-        // Market structure variables
-        private List<SwingPoint> swingHighs = new List<SwingPoint>();
-        private List<SwingPoint> swingLows = new List<SwingPoint>();
-        private List<OrderBlock> bullishOrderBlocks = new List<OrderBlock>();
-        private List<OrderBlock> bearishOrderBlocks = new List<OrderBlock>();
-        private List<FairValueGap> fairValueGaps = new List<FairValueGap>();
-        private List<LiquiditySweep> liquiditySweeps = new List<LiquiditySweep>();
-        private List<BreakOfStructure> structureBreaks = new List<BreakOfStructure>();
-        private double equilibriumLevel = 0;
-
-        private ATR atr;
-        private bool inLongPosition = false;
-        private bool inShortPosition = false;
-        private double entryPrice = 0;
-        private double stopLossPrice = 0;
-        private double takeProfit1 = 0;
-        private double takeProfit2 = 0;
-        private int barsSinceEntry = 0;
-        private int currentPositionQuantity = 0;
-        private bool isBullishBOS = false;
-        private bool isBearishBOS = false;
-        private bool recentLiquiditySweepBull = false;
-        private bool recentLiquiditySweepBear = false;
-        #endregion
-
-        #region Classes to represent key concepts
-        private class SwingPoint
+        #region Variables and Parameters
+        
+        // Strategy Parameters
+        private int lookbackPeriod = 50;
+        private double riskPercentage = 1.0;
+        private double atrMultiplier = 0.5;
+        private int barsRequiredToTradeHigh = 2;
+        private int barsRequiredToTradeLow = 2;
+        
+        // Indicators
+        private ATR atrIndicator;
+        
+        // Custom Series
+        private Series<double> atrValues;
+        private Series<bool> uptrend;
+        private Series<bool> downtrend;
+        private Series<bool> liqSweepUpDetected;
+        private Series<bool> liqSweepDownDetected;
+        private Series<bool> bosUp;
+        private Series<bool> bosDown;
+        private Series<bool> obCreated;
+        private Series<double> obHigh;
+        private Series<double> obLow;
+        private Series<bool> obBullish;
+        private Series<bool> obBearish;
+        private Series<bool> fvgCreated;
+        private Series<double> fvgHigh;
+        private Series<double> fvgLow;
+        private Series<bool> fvgBullish;
+        private Series<bool> fvgBearish;
+        private Series<double> eqLevel;
+        
+        // State tracking variables
+        private bool inLong = false;
+        private bool inShort = false;
+        private double entryPrice = 0.0;
+        private int entryBar = 0;
+        private double stopLossPrice = 0.0;
+        private double takeProfitPrice1 = 0.0;
+        private double takeProfitPrice2 = 0.0;
+        private int tradeBarsSinceEntry = 0;
+        
+        // Swing points storage
+        private List<SwingPoint> swingHighs;
+        private List<SwingPoint> swingLows;
+        
+        // Structure for swing points
+        public class SwingPoint
         {
-            public double Price { get; set; }
             public int BarIndex { get; set; }
-            public bool IsHigh { get; set; }
+            public double Price { get; set; }
             public bool Swept { get; set; }
-
-            public SwingPoint(double price, int barIndex, bool isHigh)
+            
+            public SwingPoint(int barIndex, double price)
             {
-                Price = price;
                 BarIndex = barIndex;
-                IsHigh = isHigh;
+                Price = price;
                 Swept = false;
             }
         }
-
-        private class OrderBlock
-        {
-            public double High { get; set; }
-            public double Low { get; set; }
-            public double Open { get; set; }
-            public double Close { get; set; }
-            public double MidPoint { get; set; }
-            public int BarIndex { get; set; }
-            public bool IsBullish { get; set; }
-            public bool Touched { get; set; }
-
-            public OrderBlock(double high, double low, double open, double close, int barIndex, bool isBullish)
-            {
-                High = high;
-                Low = low;
-                Open = open;
-                Close = close;
-                MidPoint = (high + low) / 2;
-                BarIndex = barIndex;
-                IsBullish = isBullish;
-                Touched = false;
-            }
-        }
-
-        private class FairValueGap
-        {
-            public double Upper { get; set; }
-            public double Lower { get; set; }
-            public int BarIndex { get; set; }
-            public bool IsBullish { get; set; }
-            public bool Filled { get; set; }
-
-            public FairValueGap(double upper, double lower, int barIndex, bool isBullish)
-            {
-                Upper = upper;
-                Lower = lower;
-                BarIndex = barIndex;
-                IsBullish = isBullish;
-                Filled = false;
-            }
-        }
-
-        private class LiquiditySweep
-        {
-            public double SweepLevel { get; set; }
-            public int BarIndex { get; set; }
-            public bool IsBullish { get; set; }
-            public double StopLossLevel { get; set; }
-
-            public LiquiditySweep(double sweepLevel, int barIndex, bool isBullish, double stopLossLevel)
-            {
-                SweepLevel = sweepLevel;
-                BarIndex = barIndex;
-                IsBullish = isBullish;
-                StopLossLevel = stopLossLevel;
-            }
-        }
-
-        private class BreakOfStructure
-        {
-            public double BreakLevel { get; set; }
-            public int BarIndex { get; set; }
-            public bool IsBullish { get; set; }
-
-            public BreakOfStructure(double breakLevel, int barIndex, bool isBullish)
-            {
-                BreakLevel = breakLevel;
-                BarIndex = barIndex;
-                IsBullish = isBullish;
-            }
-        }
+        
         #endregion
-
+        
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
-                Description = @"Ingenuity Trading Strategy based on liquidity, BOS, OB, and FVG";
-                Name = "IngenuityStrategy";
-                Calculate = Calculate.OnBarClose;
-                EntriesPerDirection = 1;
-                EntryHandling = EntryHandling.AllEntries;
-                IsExitOnSessionCloseStrategy = true;
-                ExitOnSessionCloseSeconds = 30;
-                IsFillLimitOnTouch = false;
-                MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix;
-                OrderFillResolution = OrderFillResolution.Standard;
-                Slippage = 0;
-                StartBehavior = StartBehavior.WaitUntilFlat;
-                TimeInForce = TimeInForce.Gtc;
-                TraceOrders = false;
-                RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose;
-                StopTargetHandling = StopTargetHandling.PerEntryExecution;
-                BarsRequiredToTrade = 20;
-                // Disable this property for performance gains in Strategy Analyzer optimizations
-                IsInstantiatedOnEachOptimizationIteration = true;
+                Description                    = @"Ingenuity Strategy based on Liquidity, BOS, OB, FVG, and EQ";
+                Name                           = "IngenuityStrategy";
+                Calculate                      = Calculate.OnBarClose;
+                EntriesPerDirection            = 1;
+                EntryHandling                  = EntryHandling.AllEntries;
+                IsExitOnSessionCloseStrategy   = true;
+                ExitOnSessionCloseSeconds      = 30;
+                IsFillLimitOnTouch             = false;
+                MaximumBarsLookBack            = MaximumBarsLookBack.TwoHundredFiftySix;
+                OrderFillResolution            = OrderFillResolution.Standard;
+                Slippage                       = 0;
+                StartBehavior                  = StartBehavior.WaitUntilFlat;
+                TimeInForce                    = TimeInForce.Gtc;
+                TraceOrders                    = false;
+                RealtimeErrorHandling          = RealtimeErrorHandling.StopCancelClose;
+                StopTargetHandling             = StopTargetHandling.PerEntryExecution;
+                BarsRequiredToTrade            = 20;
+                
+                // Add user-defined parameters here
+                LookbackPeriod                 = 50;
+                RiskPercentage                 = 1.0;
+                ATRMultiplier                  = 0.5;
+                BarsRequiredToTradeHigh        = 2;
+                BarsRequiredToTradeLow         = 2;
             }
             else if (State == State.Configure)
             {
-                AddDataSeries(Data.BarsPeriodType.Minute, 15); // Add higher timeframe
-            }
-            else if (State == State.DataLoaded)
-            {
-                atr = ATR(14);
+                // Initialize lists
+                swingHighs = new List<SwingPoint>();
+                swingLows = new List<SwingPoint>();
+                
+                // Add indicators
+                atrIndicator = ATR(14);
+                
+                // Initialize series
+                atrValues = new Series<double>(this);
+                uptrend = new Series<bool>(this);
+                downtrend = new Series<bool>(this);
+                liqSweepUpDetected = new Series<bool>(this);
+                liqSweepDownDetected = new Series<bool>(this);
+                bosUp = new Series<bool>(this);
+                bosDown = new Series<bool>(this);
+                obCreated = new Series<bool>(this);
+                obHigh = new Series<double>(this);
+                obLow = new Series<double>(this);
+                obBullish = new Series<bool>(this);
+                obBearish = new Series<bool>(this);
+                fvgCreated = new Series<bool>(this);
+                fvgHigh = new Series<double>(this);
+                fvgLow = new Series<double>(this);
+                fvgBullish = new Series<bool>(this);
+                fvgBearish = new Series<bool>(this);
+                eqLevel = new Series<double>(this);
             }
         }
 
         protected override void OnBarUpdate()
         {
-            // Wait for required bars
+            // Wait for enough bars to calculate indicators
             if (CurrentBar < BarsRequiredToTrade)
                 return;
-
-            // Only process on primary timeframe
-            if (BarsInProgress != 0)
-                return;
-
-            // Update ATR indicator
-            double currentAtr = atr[0];
-
-            // 1. Update market structure
-            UpdateSwingPoints();
-            CheckLiquiditySweeps(currentAtr);
-            CheckBreakOfStructure();
+            
+            // Update ATR value
+            atrValues[0] = atrIndicator[0];
+            
+            // Process core strategy components
+            IdentifyTrend();
+            DetectSwingPoints();
+            DetectLiquiditySweeps();
+            DetectBreakOfStructure();
             IdentifyOrderBlocks();
             IdentifyFairValueGaps();
-            UpdateEquilibriumLevel();
-
-            // 2. Process entries and exits if we're in a position
-            if (inLongPosition || inShortPosition)
-            {
-                barsSinceEntry++;
-                ManageExistingPositions();
-            }
-            // 3. Look for new entry opportunities
-            else
-            {
-                EvaluateEntrySetups(currentAtr);
-            }
-
-            // 4. Draw indicators for visual reference
-            if (IsFirstTickOfBar)
-            {
-                DrawMarketStructure();
-            }
-        }
-
-        #region Market Structure Analysis Methods
-        private void UpdateSwingPoints()
-        {
-            // Simple swing point identification using pivot high/low
-            // A swing high is formed when there are lower highs on both sides
-            // A swing low is formed when there are higher lows on both sides
-            int swingLookback = Math.Min(5, lookbackPeriod / 4);
-
-            // Check for swing high
-            bool isSwingHigh = true;
-            for (int i = 1; i <= swingLookback; i++)
-            {
-                if (High[swingLookback] < High[swingLookback - i] || High[swingLookback] < High[swingLookback + i])
-                {
-                    isSwingHigh = false;
-                    break;
-                }
-            }
-
-            if (isSwingHigh)
-            {
-                swingHighs.Add(new SwingPoint(High[swingLookback], CurrentBar - swingLookback, true));
-                // Clean up old swing points
-                if (swingHighs.Count > 10)
-                    swingHighs.RemoveAt(0);
-            }
-
-            // Check for swing low
-            bool isSwingLow = true;
-            for (int i = 1; i <= swingLookback; i++)
-            {
-                if (Low[swingLookback] > Low[swingLookback - i] || Low[swingLookback] > Low[swingLookback + i])
-                {
-                    isSwingLow = false;
-                    break;
-                }
-            }
-
-            if (isSwingLow)
-            {
-                swingLows.Add(new SwingPoint(Low[swingLookback], CurrentBar - swingLookback, false));
-                // Clean up old swing points
-                if (swingLows.Count > 10)
-                    swingLows.RemoveAt(0);
-            }
-        }
-
-        private void CheckLiquiditySweeps(double currentAtr)
-        {
-            // Check for bullish liquidity sweep (price sweeps below recent swing low)
-            foreach (SwingPoint low in swingLows.Where(l => !l.Swept && CurrentBar - l.BarIndex < lookbackPeriod))
-            {
-                // Price went below swing low
-                if (Low[0] < low.Price && Close[0] > low.Price)
-                {
-                    // Confirm it's a sweep with a rejection (close back above)
-                    low.Swept = true;
-                    double sweepSize = Math.Abs(Low[0] - low.Price);
-                    
-                    // Only consider valid sweeps (not too large)
-                    if (sweepSize < currentAtr * 1.5)
-                    {
-                        double stopLossLevel = Low[0] - (0.2 * currentAtr); // Small buffer below sweep
-                        liquiditySweeps.Add(new LiquiditySweep(low.Price, CurrentBar, true, stopLossLevel));
-                        recentLiquiditySweepBull = true;
-                        
-                        Draw.Text(this, "BullSweep" + CurrentBar, "Bull Sweep", 0, Low[0], -15);
-                    }
-                }
-            }
-
-            // Check for bearish liquidity sweep (price sweeps above recent swing high)
-            foreach (SwingPoint high in swingHighs.Where(h => !h.Swept && CurrentBar - h.BarIndex < lookbackPeriod))
-            {
-                // Price went above swing high
-                if (High[0] > high.Price && Close[0] < high.Price)
-                {
-                    // Confirm it's a sweep with a rejection (close back below)
-                    high.Swept = true;
-                    double sweepSize = Math.Abs(High[0] - high.Price);
-                    
-                    // Only consider valid sweeps (not too large)
-                    if (sweepSize < currentAtr * 1.5)
-                    {
-                        double stopLossLevel = High[0] + (0.2 * currentAtr); // Small buffer above sweep
-                        liquiditySweeps.Add(new LiquiditySweep(high.Price, CurrentBar, false, stopLossLevel));
-                        recentLiquiditySweepBear = true;
-                        
-                        Draw.Text(this, "BearSweep" + CurrentBar, "Bear Sweep", 0, High[0], 15);
-                    }
-                }
-            }
-
-            // Clean up old liquidity sweeps
-            for (int i = liquiditySweeps.Count - 1; i >= 0; i--)
-            {
-                if (CurrentBar - liquiditySweeps[i].BarIndex > lookbackPeriod)
-                {
-                    liquiditySweeps.RemoveAt(i);
-                }
-            }
-
-            // Reset recent sweep flags if they're too old
-            if (recentLiquiditySweepBull && liquiditySweeps.LastOrDefault(x => x.IsBullish) != null &&
-                CurrentBar - liquiditySweeps.LastOrDefault(x => x.IsBullish).BarIndex > 5)
-            {
-                recentLiquiditySweepBull = false;
-            }
-
-            if (recentLiquiditySweepBear && liquiditySweeps.LastOrDefault(x => !x.IsBullish) != null &&
-                CurrentBar - liquiditySweeps.LastOrDefault(x => !x.IsBullish).BarIndex > 5)
-            {
-                recentLiquiditySweepBear = false;
-            }
-        }
-
-        private void CheckBreakOfStructure()
-        {
-            // Find the most recent higher low and lower high
-            SwingPoint recentHigherLow = null;
-            SwingPoint recentLowerHigh = null;
+            CalculateEquilibriumLevels();
             
-            // Find the most recent higher low (for bearish BOS check)
-            for (int i = swingLows.Count - 1; i >= 1; i--)
-            {
-                if (swingLows[i].Price > swingLows[i - 1].Price && 
-                    CurrentBar - swingLows[i].BarIndex < lookbackPeriod)
-                {
-                    recentHigherLow = swingLows[i];
-                    break;
-                }
-            }
-
-            // Find the most recent lower high (for bullish BOS check)
-            for (int i = swingHighs.Count - 1; i >= 1; i--)
-            {
-                if (swingHighs[i].Price < swingHighs[i - 1].Price &&
-                    CurrentBar - swingHighs[i].BarIndex < lookbackPeriod)
-                {
-                    recentLowerHigh = swingHighs[i];
-                    break;
-                }
-            }
-
-            // Check for bullish break of structure (price closes above recent lower high)
-            if (recentLowerHigh != null && Close[0] > recentLowerHigh.Price && !isBullishBOS)
-            {
-                structureBreaks.Add(new BreakOfStructure(recentLowerHigh.Price, CurrentBar, true));
-                isBullishBOS = true;
-                isBearishBOS = false;
+            // Handle trading logic
+            ManageExistingPositions();
+            CheckForNewEntries();
+            
+            // Draw key levels for visualization
+            DrawLevels();
+        }
+        
+        #region Strategy Component Methods
+        
+        private void IdentifyTrend()
+        {
+            // Default trend state
+            uptrend[0] = false;
+            downtrend[0] = false;
+            
+            // Simple trend detection based on higher highs/lows or lower highs/lows
+            if (CurrentBar < 4)
+                return;
                 
-                Draw.Text(this, "BullBOS" + CurrentBar, "Bull BOS", 0, Close[0], 15);
+            // Higher highs and higher lows = uptrend
+            if (High[0] > High[1] && Low[0] > Low[1] && High[1] > High[2] && Low[1] > Low[2])
+            {
+                uptrend[0] = true;
+            }
+            // Lower highs and lower lows = downtrend
+            else if (High[0] < High[1] && Low[0] < Low[1] && High[1] < High[2] && Low[1] < Low[2])
+            {
+                downtrend[0] = true;
+            }
+        }
+        
+        private void DetectSwingPoints()
+        {
+            if (CurrentBar < 5)
+                return;
+                
+            // Detecting swing highs (pivot highs)
+            if (High[2] > High[1] && High[2] > High[3] && High[2] > High[0] && High[2] > High[4])
+            {
+                swingHighs.Add(new SwingPoint(CurrentBar - 2, High[2]));
+                
+                // For visualization
+                Draw.Dot(this, "SwingHigh_" + (CurrentBar - 2).ToString(), false, 2, High[2], Brushes.DodgerBlue);
             }
             
-            // Check for bearish break of structure (price closes below recent higher low)
-            if (recentHigherLow != null && Close[0] < recentHigherLow.Price && !isBearishBOS)
+            // Detecting swing lows (pivot lows)
+            if (Low[2] < Low[1] && Low[2] < Low[3] && Low[2] < Low[0] && Low[2] < Low[4])
             {
-                structureBreaks.Add(new BreakOfStructure(recentHigherLow.Price, CurrentBar, false));
-                isBearishBOS = true;
-                isBullishBOS = false;
+                swingLows.Add(new SwingPoint(CurrentBar - 2, Low[2]));
                 
-                Draw.Text(this, "BearBOS" + CurrentBar, "Bear BOS", 0, Close[0], -15);
+                // For visualization
+                Draw.Dot(this, "SwingLow_" + (CurrentBar - 2).ToString(), false, 2, Low[2], Brushes.Crimson);
             }
-
-            // Clean up old structure breaks
-            for (int i = structureBreaks.Count - 1; i >= 0; i--)
+            
+            // Cleanup old swing points to prevent memory issues
+            if (CurrentBar % 100 == 0)
             {
-                if (CurrentBar - structureBreaks[i].BarIndex > lookbackPeriod)
-                {
-                    structureBreaks.RemoveAt(i);
-                }
-            }
-
-            // Reset BOS flags if they're too old
-            if (isBullishBOS && structureBreaks.LastOrDefault(x => x.IsBullish) != null &&
-                CurrentBar - structureBreaks.LastOrDefault(x => x.IsBullish).BarIndex > lookbackPeriod)
-            {
-                isBullishBOS = false;
-            }
-
-            if (isBearishBOS && structureBreaks.LastOrDefault(x => !x.IsBullish) != null &&
-                CurrentBar - structureBreaks.LastOrDefault(x => !x.IsBullish).BarIndex > lookbackPeriod)
-            {
-                isBearishBOS = false;
+                CleanupOldSwingPoints();
             }
         }
-
+        
+        private void CleanupOldSwingPoints()
+        {
+            int cutoffBar = Math.Max(0, CurrentBar - LookbackPeriod);
+            swingHighs.RemoveAll(sp => sp.BarIndex < cutoffBar);
+            swingLows.RemoveAll(sp => sp.BarIndex < cutoffBar);
+        }
+        
+        private void DetectLiquiditySweeps()
+        {
+            liqSweepUpDetected[0] = false;
+            liqSweepDownDetected[0] = false;
+            
+            if (swingHighs.Count < 2 || swingLows.Count < 2)
+                return;
+                
+            // Get recent swing points (that aren't already swept)
+            var recentHighs = swingHighs.Where(sp => !sp.Swept && sp.BarIndex < CurrentBar - 1)
+                                      .OrderByDescending(sp => sp.BarIndex)
+                                      .Take(3)
+                                      .ToList();
+                                      
+            var recentLows = swingLows.Where(sp => !sp.Swept && sp.BarIndex < CurrentBar - 1)
+                                     .OrderByDescending(sp => sp.BarIndex)
+                                     .Take(3)
+                                     .ToList();
+            
+            // Check for bullish liquidity sweep (price goes below recent low but closes back above)
+            foreach (var swingLow in recentLows)
+            {
+                // Price went below swing low (sweep) but closed back above
+                if (Low[0] < swingLow.Price && Close[0] > swingLow.Price)
+                {
+                    liqSweepDownDetected[0] = true;
+                    swingLow.Swept = true;
+                    
+                    // Draw the liquidity sweep
+                    Draw.Diamond(this, "LiqSweepDown_" + CurrentBar, false, 0, Low[0], Brushes.Green);
+                    Draw.Text(this, "LiqSweepDownText_" + CurrentBar, "LIQ↑", 0, Low[0] - (5 * TickSize), Brushes.Green);
+                    
+                    // Break out of the loop after first sweep detection
+                    break;
+                }
+            }
+            
+            // Check for bearish liquidity sweep (price goes above recent high but closes back below)
+            foreach (var swingHigh in recentHighs)
+            {
+                // Price went above swing high (sweep) but closed back below
+                if (High[0] > swingHigh.Price && Close[0] < swingHigh.Price)
+                {
+                    liqSweepUpDetected[0] = true;
+                    swingHigh.Swept = true;
+                    
+                    // Draw the liquidity sweep
+                    Draw.Diamond(this, "LiqSweepUp_" + CurrentBar, false, 0, High[0], Brushes.Red);
+                    Draw.Text(this, "LiqSweepUpText_" + CurrentBar, "LIQ↓", 0, High[0] + (5 * TickSize), Brushes.Red);
+                    
+                    // Break out of the loop after first sweep detection
+                    break;
+                }
+            }
+        }
+        
+        private void DetectBreakOfStructure()
+        {
+            bosUp[0] = false;
+            bosDown[0] = false;
+            
+            if (CurrentBar < 5)
+                return;
+                
+            // Get most recent swing points
+            var recentHighs = swingHighs.OrderByDescending(sp => sp.BarIndex).Take(2).ToList();
+            var recentLows = swingLows.OrderByDescending(sp => sp.BarIndex).Take(2).ToList();
+            
+            // Need at least one recent swing point for both high and low
+            if (recentHighs.Count == 0 || recentLows.Count == 0)
+                return;
+                
+            // Bullish BOS - Current close breaks above the most recent lower high
+            if (recentHighs.Count >= 2 && Close[0] > recentHighs[1].Price && bosUp[1] == false)
+            {
+                bosUp[0] = true;
+                Draw.ArrowUp(this, "BosUp_" + CurrentBar, false, 0, Low[0] - (3 * atrValues[0]), Brushes.Green);
+                Draw.Text(this, "BosUpText_" + CurrentBar, "BOS↑", 0, Low[0] - (4 * atrValues[0]), Brushes.Green);
+            }
+            
+            // Bearish BOS - Current close breaks below the most recent higher low
+            if (recentLows.Count >= 2 && Close[0] < recentLows[1].Price && bosDown[1] == false)
+            {
+                bosDown[0] = true;
+                Draw.ArrowDown(this, "BosDown_" + CurrentBar, false, 0, High[0] + (3 * atrValues[0]), Brushes.Red);
+                Draw.Text(this, "BosDownText_" + CurrentBar, "BOS↓", 0, High[0] + (4 * atrValues[0]), Brushes.Red);
+            }
+        }
+        
         private void IdentifyOrderBlocks()
         {
-            // For a bullish OB, we look for the last down candle before a bullish BOS
-            // For a bearish OB, we look for the last up candle before a bearish BOS
+            obCreated[0] = false;
+            obBullish[0] = false;
+            obBearish[0] = false;
+            obHigh[0] = 0;
+            obLow[0] = 0;
             
-            // Check for new bullish OB after a bearish swing
-            if (structureBreaks.Count > 0 && structureBreaks.Last().IsBullish && 
-                CurrentBar - structureBreaks.Last().BarIndex <= 2) // Recent bullish BOS
+            // Check for a new bullish order block (the last down candle before a bullish BOS)
+            if (bosUp[0] && bosUp[1] == false)
             {
-                // Find the last bearish candle before this BOS
-                for (int i = 1; i < 5; i++)
+                // Look back to find the last bearish candle before this BOS
+                for (int i = 1; i < 10; i++)
                 {
-                    int checkBar = structureBreaks.Last().BarIndex - i;
-                    if (checkBar >= 0 && Close[CurrentBar - checkBar] < Open[CurrentBar - checkBar])
+                    if (CurrentBar - i < 0) break;
+                    
+                    if (Close[i] < Open[i])  // Bearish candle
                     {
-                        // Found a bearish candle - this is our bullish order block
-                        OrderBlock newOB = new OrderBlock(
-                            High[CurrentBar - checkBar],
-                            Low[CurrentBar - checkBar],
-                            Open[CurrentBar - checkBar],
-                            Close[CurrentBar - checkBar],
-                            checkBar,
-                            true
-                        );
-                        bullishOrderBlocks.Add(newOB);
+                        obCreated[0] = true;
+                        obBullish[0] = true;
+                        obHigh[0] = Math.Max(Open[i], Close[i]);
+                        obLow[0] = Math.Min(Open[i], Close[i]);
                         
-                        Draw.Rectangle(this, "BullOB" + checkBar, false, CurrentBar - checkBar, High[CurrentBar - checkBar], 
-                                      CurrentBar - checkBar, Low[CurrentBar - checkBar], Brushes.Green, Brushes.Green, 60);
-                        
+                        // Visualization of the Order Block
+                        Draw.Rectangle(this, "BullishOB_" + CurrentBar, false, i, obLow[0], 0, obHigh[0], Brushes.Transparent, Brushes.Green, 50);
+                        Draw.Text(this, "BullishOBText_" + CurrentBar, "Bullish OB", 0, Low[0] - (6 * atrValues[0]), Brushes.Green);
                         break;
                     }
                 }
             }
             
-            // Check for new bearish OB after a bullish swing
-            if (structureBreaks.Count > 0 && !structureBreaks.Last().IsBullish && 
-                CurrentBar - structureBreaks.Last().BarIndex <= 2) // Recent bearish BOS
+            // Check for a new bearish order block (the last up candle before a bearish BOS)
+            if (bosDown[0] && bosDown[1] == false)
             {
-                // Find the last bullish candle before this BOS
-                for (int i = 1; i < 5; i++)
+                // Look back to find the last bullish candle before this BOS
+                for (int i = 1; i < 10; i++)
                 {
-                    int checkBar = structureBreaks.Last().BarIndex - i;
-                    if (checkBar >= 0 && Close[CurrentBar - checkBar] > Open[CurrentBar - checkBar])
+                    if (CurrentBar - i < 0) break;
+                    
+                    if (Close[i] > Open[i])  // Bullish candle
                     {
-                        // Found a bullish candle - this is our bearish order block
-                        OrderBlock newOB = new OrderBlock(
-                            High[CurrentBar - checkBar],
-                            Low[CurrentBar - checkBar],
-                            Open[CurrentBar - checkBar],
-                            Close[CurrentBar - checkBar],
-                            checkBar,
-                            false
-                        );
-                        bearishOrderBlocks.Add(newOB);
+                        obCreated[0] = true;
+                        obBearish[0] = true;
+                        obHigh[0] = Math.Max(Open[i], Close[i]);
+                        obLow[0] = Math.Min(Open[i], Close[i]);
                         
-                        Draw.Rectangle(this, "BearOB" + checkBar, false, CurrentBar - checkBar, High[CurrentBar - checkBar], 
-                                      CurrentBar - checkBar, Low[CurrentBar - checkBar], Brushes.Red, Brushes.Red, 60);
-                        
+                        // Visualization of the Order Block
+                        Draw.Rectangle(this, "BearishOB_" + CurrentBar, false, i, obLow[0], 0, obHigh[0], Brushes.Transparent, Brushes.Red, 50);
+                        Draw.Text(this, "BearishOBText_" + CurrentBar, "Bearish OB", 0, High[0] + (6 * atrValues[0]), Brushes.Red);
                         break;
                     }
                 }
             }
-
-            // Check if price has touched any order blocks
-            foreach (OrderBlock ob in bullishOrderBlocks.Where(o => !o.Touched))
-            {
-                if (Low[0] <= ob.High && Low[0] >= ob.Low)
-                {
-                    ob.Touched = true;
-                    Draw.Diamond(this, "BullOBTouch" + CurrentBar, false, 0, Low[0], Brushes.Green);
-                }
-            }
-
-            foreach (OrderBlock ob in bearishOrderBlocks.Where(o => !o.Touched))
-            {
-                if (High[0] >= ob.Low && High[0] <= ob.High)
-                {
-                    ob.Touched = true;
-                    Draw.Diamond(this, "BearOBTouch" + CurrentBar, false, 0, High[0], Brushes.Red);
-                }
-            }
-
-            // Clean up old order blocks
-            bullishOrderBlocks.RemoveAll(ob => CurrentBar - ob.BarIndex > lookbackPeriod);
-            bearishOrderBlocks.RemoveAll(ob => CurrentBar - ob.BarIndex > lookbackPeriod);
         }
-
+        
         private void IdentifyFairValueGaps()
         {
-            // Check for bullish FVG (low of current bar is above high of previous bar)
-            if (Low[1] > High[2])
-            {
-                FairValueGap newFVG = new FairValueGap(Low[1], High[2], CurrentBar - 1, true);
-                fairValueGaps.Add(newFVG);
+            fvgCreated[0] = false;
+            fvgBullish[0] = false;
+            fvgBearish[0] = false;
+            fvgHigh[0] = 0;
+            fvgLow[0] = 0;
+            
+            if (CurrentBar < 2)
+                return;
                 
-                Draw.Rectangle(this, "BullFVG" + (CurrentBar-1), false, CurrentBar - 1, Low[1], 
-                              CurrentBar - 1, High[2], Brushes.LimeGreen, Brushes.LimeGreen, 30);
+            // Bullish FVG - Current candle's low is above the previous candle's high
+            if (Low[0] > High[1])
+            {
+                fvgCreated[0] = true;
+                fvgBullish[0] = true;
+                fvgHigh[0] = Low[0];
+                fvgLow[0] = High[1];
+                
+                // Draw the FVG
+                Draw.Rectangle(this, "BullishFVG_" + CurrentBar, false, 1, fvgLow[0], 0, fvgHigh[0], Brushes.LightGreen, Brushes.Green, 30);
             }
             
-            // Check for bearish FVG (high of current bar is below low of previous bar)
-            if (High[1] < Low[2])
+            // Bearish FVG - Current candle's high is below the previous candle's low
+            if (High[0] < Low[1])
             {
-                FairValueGap newFVG = new FairValueGap(Low[2], High[1], CurrentBar - 1, false);
-                fairValueGaps.Add(newFVG);
+                fvgCreated[0] = true;
+                fvgBearish[0] = true;
+                fvgHigh[0] = Low[1];
+                fvgLow[0] = High[0];
                 
-                Draw.Rectangle(this, "BearFVG" + (CurrentBar-1), false, CurrentBar - 1, Low[2], 
-                              CurrentBar - 1, High[1], Brushes.Crimson, Brushes.Crimson, 30);
+                // Draw the FVG
+                Draw.Rectangle(this, "BearishFVG_" + CurrentBar, false, 1, fvgLow[0], 0, fvgHigh[0], Brushes.Pink, Brushes.Red, 30);
             }
-            // Check if price has filled any fair value gaps
-            foreach (FairValueGap fvg in fairValueGaps.Where(f => !f.Filled))
-            {
-                if (fvg.IsBullish && Low[0] <= fvg.Upper && Low[0] >= fvg.Lower)
-                {
-                    fvg.Filled = true;
-                    Draw.Diamond(this, "BullFVGFill" + CurrentBar, false, 0, Low[0], Brushes.Green);
-                }
-                else if (!fvg.IsBullish && High[0] >= fvg.Lower && High[0] <= fvg.Upper)
-                {
-                    fvg.Filled = true;
-                    Draw.Diamond(this, "BearFVGFill" + CurrentBar, false, 0, High[0], Brushes.Red);
-                }
-            }
-
-            // Clean up old FVGs
-            fairValueGaps.RemoveAll(fvg => CurrentBar - fvg.BarIndex > lookbackPeriod);
         }
-
-        private void UpdateEquilibriumLevel()
+        
+        private void CalculateEquilibriumLevels()
         {
-            // Calculate equilibrium level for recent swing (50% retracement level)
-            if (swingHighs.Count > 0 && swingLows.Count > 0)
+            eqLevel[0] = 0;
+            
+            // Find the highest high and lowest low in the recent lookback period
+            double highestHigh = double.MinValue;
+            double lowestLow = double.MaxValue;
+            
+            for (int i = 1; i <= 10; i++)
             {
-                SwingPoint recentHigh = swingHighs.Last();
-                SwingPoint recentLow = swingLows.Last();
+                if (CurrentBar < i) continue;
                 
-                // Make sure we're using the most recent ones
-                if (recentHigh.BarIndex > recentLow.BarIndex)
-                {
-                    // Latest swing is a high, so look for the most recent low
-                    for (int i = swingLows.Count - 1; i >= 0; i--)
-                    {
-                        if (swingLows[i].BarIndex < recentHigh.BarIndex)
-                        {
-                            recentLow = swingLows[i];
-                            break;
-                        }
-                    }
-                }
-                else
-                {
-                    // Latest swing is a low, so look for the most recent high
-                    for (int i = swingHighs.Count - 1; i >= 0; i--)
-                    {
-                        if (swingHighs[i].BarIndex < recentLow.BarIndex)
-                        {
-                            recentHigh = swingHighs[i];
-                            break;
-                        }
-                    }
-                }
-                
-                // Calculate 50% level
-                equilibriumLevel = (recentHigh.Price + recentLow.Price) / 2;
-                
-                // Draw EQ line
-                Draw.Line(this, "EQ" + CurrentBar, false, 10, equilibriumLevel, 0, equilibriumLevel, Brushes.Yellow, DashStyleHelper.Dash, 1);
+                highestHigh = Math.Max(highestHigh, High[i]);
+                lowestLow = Math.Min(lowestLow, Low[i]);
+            }
+            
+            // Calculate the 50% equilibrium level
+            eqLevel[0] = lowestLow + ((highestHigh - lowestLow) * 0.5);
+            
+            // Draw the EQ level
+            if (CurrentBar % 5 == 0)  // Only redraw occasionally to reduce visual clutter
+            {
+                Draw.Line(this, "EQ_" + CurrentBar, false, 10, eqLevel[0], 0, eqLevel[0], Brushes.Purple, DashStyleHelper.Dash, 1);
+                Draw.Text(this, "EQText_" + CurrentBar, "EQ", 0, eqLevel[0] + (2 * TickSize), Brushes.Purple);
             }
         }
+        
         #endregion
-
-        #region Trade Management Methods
-        private void EvaluateEntrySetups(double currentAtr)
+        
+        #region Trading Logic
+        
+        private void CheckForNewEntries()
         {
-            // 1. LIQ Sweep + BOS Setup
-            if (Position.MarketPosition == MarketPosition.Flat)
+            // Skip if already in a position
+            if (inLong || inShort)
+                return;
+                
+            // Entry Strategy A: LIQ Sweep + BOS
+            CheckLiqSweepBosEntry();
+            
+            // Entry Strategy B: LIQ Sweep + BOS + Retrace into OB
+            CheckLiqSweepBosObEntry();
+            
+            // Entry Strategy C: LIQ Sweep + BOS + FVG Filled
+            CheckLiqSweepBosFvgEntry();
+            
+            // Entry Strategy D: LIQ Sweep + BOS + FVG/OB + EQ (Ultimate Confluence)
+            CheckUltimateConfluenceEntry();
+        }
+        
+        private void CheckLiqSweepBosEntry()
+        {
+            // Bullish entry: Liquidity sweep down followed by break of structure up
+            if (liqSweepDownDetected[0] && bosUp[0])
             {
-                // Check for bullish setup (bearish sweep + bullish BOS)
-                if (recentLiquiditySweepBull && isBullishBOS)
+                ExecuteLongEntry("LiqSweepBos");
+            }
+            
+            // Bearish entry: Liquidity sweep up followed by break of structure down
+            if (liqSweepUpDetected[0] && bosDown[0])
+            {
+                ExecuteShortEntry("LiqSweepBos");
+            }
+        }
+        
+        private void CheckLiqSweepBosObEntry()
+        {
+            // Need a previous bullish order block for a long trade
+            if (HasBullishOrderBlock() && HasLiquiditySweepDown() && HasBreakOfStructureUp())
+            {
+                // Find the most recent bullish OB
+                double obHighLevel = 0;
+                double obLowLevel = 0;
+                
+                for (int i = 0; i < 20; i++)
                 {
-                    LiquiditySweep bullSweep = liquiditySweeps.LastOrDefault(s => s.IsBullish);
-                    BreakOfStructure bullBOS = structureBreaks.LastOrDefault(b => b.IsBullish);
+                    if (CurrentBar - i < 0) break;
                     
-                    if (bullSweep != null && bullBOS != null && 
-                        bullBOS.BarIndex > bullSweep.BarIndex && 
-                        CurrentBar - bullBOS.BarIndex <= 3)
+                    if (obBullish[i])
                     {
-                        // Check for additional confirmation - OB touch or FVG fill
-                        bool confirmationFound = false;
-                        
-                        if (useOrderBlockEntry)
-                        {
-                            // Check for recent bullish OB touch
-                            OrderBlock recentBullOB = bullishOrderBlocks.LastOrDefault(ob => ob.Touched);
-                            if (recentBullOB != null && recentBullOB.Touched && 
-                                recentBullOB.BarIndex < bullBOS.BarIndex)
-                            {
-                                confirmationFound = true;
-                            }
-                        }
-                        
-                        if (useFVGConfirmation && !confirmationFound)
-                        {
-                            // Check for recent bullish FVG fill
-                            FairValueGap recentBullFVG = fairValueGaps.LastOrDefault(fvg => 
-                                fvg.IsBullish && fvg.Filled && fvg.BarIndex < bullBOS.BarIndex);
-                            
-                            if (recentBullFVG != null)
-                            {
-                                confirmationFound = true;
-                            }
-                        }
-                        
-                        // If no OB/FVG confirmation required or found
-                        if (!useOrderBlockEntry && !useFVGConfirmation || confirmationFound)
-                        {
-                            // Check if price is at a good level (below EQ for bullish)
-                            bool priceDiscounted = useEQConfluence ? (Close[0] <= equilibriumLevel) : true;
-                            
-                            if (priceDiscounted)
-                            {
-                                // Entry calculations
-                                stopLossPrice = bullSweep.StopLossLevel;
-                                entryPrice = Close[0];
-                                double riskPerShare = Math.Abs(entryPrice - stopLossPrice);
-                                
-                                // Position sizing based on risk percentage
-                                double accountValue = Account.Get(AccountItem.CashValue, Currency.UsDollar);
-                                double riskAmount = accountValue * (riskPercentage / 100.0);
-                                int quantity = (int)Math.Floor(riskAmount / riskPerShare / SymbolInfo.PointValue);
-                                
-                                // Set take profit levels
-                                takeProfit1 = entryPrice + (riskPerShare * (takeProfit1Percentage / 100.0));
-                                takeProfit2 = entryPrice + (riskPerShare * (takeProfit2Percentage / 100.0));
-                                
-                                // Execute the long entry
-                                EnterLong(quantity, "BullEntry");
-                                inLongPosition = true;
-                                barsSinceEntry = 0;
-                                currentPositionQuantity = quantity;
-                                
-                                Print("LONG Entry: Price=" + entryPrice + ", SL=" + stopLossPrice + 
-                                      ", TP1=" + takeProfit1 + ", TP2=" + takeProfit2 + ", Qty=" + quantity);
-                            }
-                        }
+                        obHighLevel = obHigh[i];
+                        obLowLevel = obLow[i];
+                        break;
                     }
                 }
                 
-                // Check for bearish setup (bullish sweep + bearish BOS)
-                if (recentLiquiditySweepBear && isBearishBOS)
+                // Price is retracing into the order block
+                if (obHighLevel > 0 && obLowLevel > 0 && 
+                    Low[0] <= obHighLevel && Close[0] >= obLowLevel)
                 {
-                    LiquiditySweep bearSweep = liquiditySweeps.LastOrDefault(s => !s.IsBullish);
-                    BreakOfStructure bearBOS = structureBreaks.LastOrDefault(b => !b.IsBullish);
+                    ExecuteLongEntry("LiqSweepBosOb");
+                }
+            }
+            
+            // Need a previous bearish order block for a short trade
+            if (HasBearishOrderBlock() && HasLiquiditySweepUp() && HasBreakOfStructureDown())
+            {
+                // Find the most recent bearish OB
+                double obHighLevel = 0;
+                double obLowLevel = 0;
+                
+                for (int i = 0; i < 20; i++)
+                {
+                    if (CurrentBar - i < 0) break;
                     
-                    if (bearSweep != null && bearBOS != null && 
-                        bearBOS.BarIndex > bearSweep.BarIndex && 
-                        CurrentBar - bearBOS.BarIndex <= 3)
+                    if (obBearish[i])
                     {
-                        // Check for additional confirmation - OB touch or FVG fill
-                        bool confirmationFound = false;
-                        
-                        if (useOrderBlockEntry)
+                        obHighLevel = obHigh[i];
+                        obLowLevel = obLow[i];
+                        break;
+                    }
+                }
+                
+                // Price is retracing into the order block
+                if (obHighLevel > 0 && obLowLevel > 0 && 
+                    High[0] >= obLowLevel && Close[0] <= obHighLevel)
+                {
+                    ExecuteShortEntry("LiqSweepBosOb");
+                }
+            }
+        }
+        
+        private void CheckLiqSweepBosFvgEntry()
+        {
+            // Need a previous bullish FVG for a long trade
+            if (HasBullishFVG() && HasLiquiditySweepDown() && HasBreakOfStructureUp())
+            {
+                // Find the most recent bullish FVG
+                double fvgHighLevel = 0;
+                double fvgLowLevel = 0;
+                
+                for (int i = 0; i < 20; i++)
+                {
+                    if (CurrentBar - i < 0) break;
+                    
+                    if (fvgBullish[i])
+                    {
+                        fvgHighLevel = fvgHigh[i];
+                        fvgLowLevel = fvgLow[i];
+                        break;
+                    }
+                }
+                
+                // Price is filling the FVG
+                if (fvgHighLevel > 0 && fvgLowLevel > 0 && 
+                    Low[0] <= fvgHighLevel && Low[0] >= fvgLowLevel)
+                {
+                    ExecuteLongEntry("LiqSweepBosFvg");
+                }
+            }
+            
+            // Need a previous bearish FVG for a short trade
+            if (HasBearishFVG() && HasLiquiditySweepUp() && HasBreakOfStructureDown())
+            {
+                // Find the most recent bearish FVG
+                double fvgHighLevel = 0;
+                double fvgLowLevel = 0;
+                
+                for (int i = 0; i < 20; i++)
+                {
+                    if (CurrentBar - i < 0) break;
+                    
+                    if (fvgBearish[i])
+                    {
+                        fvgHighLevel = fvgHigh[i];
+                        fvgLowLevel = fvgLow[i];
+                        break;
+                    }
+                }
+                
+                // Price is filling the FVG
+                if (fvgHighLevel > 0 && fvgLowLevel > 0 && 
+                    High[0] >= fvgLowLevel && High[0] <= fvgHighLevel)
+                {
+                    ExecuteShortEntry("LiqSweepBosFvg");
+                }
+            }
+        }
+        
+        private void CheckUltimateConfluenceEntry()
+        {
+            // Ultimate confluence: LIQ + BOS + OB/FVG + EQ
+            // For long entries
+            if (HasLiquiditySweepDown() && HasBreakOfStructureUp() && eqLevel[0] > 0)
+            {
+                // Price is near or below EQ (discount)
+                if (Close[0] <= eqLevel[0])
+                {
+                    // Check for OB or FVG confluence
+                    bool hasObConfluence = false;
+                    bool hasFvgConfluence = false;
+                    
+                    // Check for OB confluence
+                    if (HasBullishOrderBlock())
+                    {
+                        for (int i = 0; i < 20; i++)
                         {
-                            // Check for recent bearish OB touch
-                            OrderBlock recentBearOB = bearishOrderBlocks.LastOrDefault(ob => ob.Touched);
-                            if (recentBearOB != null && recentBearOB.Touched && 
-                                recentBearOB.BarIndex < bearBOS.BarIndex)
-                            {
-                                confirmationFound = true;
-                            }
-                        }
-                        
-                        if (useFVGConfirmation && !confirmationFound)
-                        {
-                            // Check for recent bearish FVG fill
-                            FairValueGap recentBearFVG = fairValueGaps.LastOrDefault(fvg => 
-                                !fvg.IsBullish && fvg.Filled && fvg.BarIndex < bearBOS.BarIndex);
+                            if (CurrentBar - i < 0) break;
                             
-                            if (recentBearFVG != null)
+                            if (obBullish[i] && Low[0] <= obHigh[i] && Close[0] >= obLow[i])
                             {
-                                confirmationFound = true;
+                                hasObConfluence = true;
+                                break;
                             }
                         }
-                        
-                        // If no OB/FVG confirmation required or found
-                        if (!useOrderBlockEntry && !useFVGConfirmation || confirmationFound)
+                    }
+                    
+                    // Check for FVG confluence
+                    if (HasBullishFVG())
+                    {
+                        for (int i = 0; i < 20; i++)
                         {
-                            // Check if price is at a good level (above EQ for bearish)
-                            bool pricePremium = useEQConfluence ? (Close[0] >= equilibriumLevel) : true;
+                            if (CurrentBar - i < 0) break;
                             
-                            if (pricePremium)
+                            if (fvgBullish[i] && Low[0] <= fvgHigh[i] && Low[0] >= fvgLow[i])
                             {
-                                // Entry calculations
-                                stopLossPrice = bearSweep.StopLossLevel;
-                                entryPrice = Close[0];
-                                double riskPerShare = Math.Abs(entryPrice - stopLossPrice);
-                                
-                                // Position sizing based on risk percentage
-                                double accountValue = Account.Get(AccountItem.CashValue, Currency.UsDollar);
-                                double riskAmount = accountValue * (riskPercentage / 100.0);
-                                int quantity = (int)Math.Floor(riskAmount / riskPerShare / SymbolInfo.PointValue);
-                                
-                                // Set take profit levels
-                                takeProfit1 = entryPrice - (riskPerShare * (takeProfit1Percentage / 100.0));
-                                takeProfit2 = entryPrice - (riskPerShare * (takeProfit2Percentage / 100.0));
-                                
-                                // Execute the short entry
-                                EnterShort(quantity, "BearEntry");
-                                inShortPosition = true;
-                                barsSinceEntry = 0;
-                                currentPositionQuantity = quantity;
-                                
-                                Print("SHORT Entry: Price=" + entryPrice + ", SL=" + stopLossPrice + 
-                                      ", TP1=" + takeProfit1 + ", TP2=" + takeProfit2 + ", Qty=" + quantity);
+                                hasFvgConfluence = true;
+                                break;
                             }
                         }
+                    }
+                    
+                    if (hasObConfluence || hasFvgConfluence)
+                    {
+                        ExecuteLongEntry("UltimateConfluence");
+                    }
+                }
+            }
+            
+            // For short entries
+            if (HasLiquiditySweepUp() && HasBreakOfStructureDown() && eqLevel[0] > 0)
+            {
+                // Price is near or above EQ (premium)
+                if (Close[0] >= eqLevel[0])
+                {
+                    // Check for OB or FVG confluence
+                    bool hasObConfluence = false;
+                    bool hasFvgConfluence = false;
+                    
+                    // Check for OB confluence
+                    if (HasBearishOrderBlock())
+                    {
+                        for (int i = 0; i < 20; i++)
+                        {
+                            if (CurrentBar - i < 0) break;
+                            
+                            if (obBearish[i] && High[0] >= obLow[i] && Close[0] <= obHigh[i])
+                            {
+                                hasObConfluence = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Check for FVG confluence
+                    if (HasBearishFVG())
+                    {
+                        for (int i = 0; i < 20; i++)
+                        {
+                            if (CurrentBar - i < 0) break;
+                            
+                            if (fvgBearish[i] && High[0] >= fvgLow[i] && High[0] <= fvgHigh[i])
+                            {
+                                hasFvgConfluence = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (hasObConfluence || hasFvgConfluence)
+                    {
+                        ExecuteShortEntry("UltimateConfluence");
                     }
                 }
             }
         }
-
+        
+        private void ExecuteLongEntry(string reason)
+        {
+            // Find the most recent liquidity sweep for stop placement
+            double sweepLow = 0;
+            
+            // Get the most recent swept low
+            foreach (var swingLow in swingLows.Where(sp => sp.Swept).OrderByDescending(sp => sp.BarIndex))
+            {
+                sweepLow = swingLow.Price;
+                break;
+            }
+            
+            // Fallback if no swept low was found
+            if (sweepLow == 0)
+            {
+                sweepLow = Low[0];
+            }
+            
+            // Define stop loss level - below the recent sweep
+            stopLossPrice = sweepLow - (ATRMultiplier * atrValues[0]);
+            
+            // Calculate take profit levels based on surrounding liquidity levels
+            double tp1Distance = (Close[0] - stopLossPrice) * 1.5; // 1.5:1 RR for first TP
+            double tp2Distance = (Close[0] - stopLossPrice) * 2.5; // 2.5:1 RR for second TP
+            
+            takeProfitPrice1 = Close[0] + tp1Distance;
+            takeProfitPrice2 = Close[0] + tp2Distance;
+            
+            // Calculate position size based on risk
+            double riskAmount = Account.Get(AccountItem.CashValue, Instrument.MasterInstrument.Currency) * (RiskPercentage / 100.0);
+            double riskPips = Math.Abs(Close[0] - stopLossPrice);
+            double tickValue = Instrument.MasterInstrument.PointValue * TickSize;
+            int quantity = (int)Math.Floor(riskAmount / (riskPips * tickValue));
+            
+            // Ensure minimum quantity
+            quantity = Math.Max(1, quantity);
+            
+            // Enter the position
+            EnterLong(quantity, reason);
+            
+            // Update state variables
+            inLong = true;
+            entryPrice = Close[0];
+            entryBar = CurrentBar;
+            tradeBarsSinceEntry = 0;
+            
+            // Draw entry indicators
+            Draw.TriangleUp(this, "LongEntry_" + CurrentBar, false, 0, Low[0] - (2 * atrValues[0]), Brushes.LimeGreen);
+            Draw.Text(this, "LongEntryText_" + CurrentBar, reason, 0, Low[0] - (3 * atrValues[0]), Brushes.White);
+            
+            // Draw stop loss
+            Draw.Line(this, "StopLoss_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Red, DashStyleHelper.Solid, 2);
+            Draw.Text(this, "StopLossText_" + CurrentBar, "SL", 0, stopLossPrice, Brushes.Red);
+            
+            // Draw take profits
+            Draw.Line(this, "TP1_" + CurrentBar, false, 0, takeProfitPrice1, 10, takeProfitPrice1, Brushes.Green, DashStyleHelper.Dash, 1);
+            Draw.Text(this, "TP1Text_" + CurrentBar, "TP1", 0, takeProfitPrice1, Brushes.Green);
+            
+            Draw.Line(this, "TP2_" + CurrentBar, false, 0, takeProfitPrice2, 10, takeProfitPrice2, Brushes.Green, DashStyleHelper.Dash, 1);
+            Draw.Text(this, "TP2Text_" + CurrentBar, "TP2", 0, takeProfitPrice2, Brushes.Green);
+        }
+        
+        private void ExecuteShortEntry(string reason)
+        {
+            // Find the most recent liquidity sweep for stop placement
+            double sweepHigh = 0;
+            
+            // Get the most recent swept high
+            foreach (var swingHigh in swingHighs.Where(sp => sp.Swept).OrderByDescending(sp => sp.BarIndex))
+            {
+                sweepHigh = swingHigh.Price;
+                break;
+            }
+            
+            // Fallback if no swept high was found
+            if (sweepHigh == 0)
+            {
+                sweepHigh = High[0];
+            }
+            
+            // Define stop loss level - above the recent sweep
+            stopLossPrice = sweepHigh + (ATRMultiplier * atrValues[0]);
+            
+            // Calculate take profit levels based on surrounding liquidity levels
+            double tp1Distance = (stopLossPrice - Close[0]) * 1.5; // 1.5:1 RR for first TP
+            double tp2Distance = (stopLossPrice - Close[0]) * 2.5; // 2.5:1 RR for second TP
+            
+            takeProfitPrice1 = Close[0] - tp1Distance;
+            takeProfitPrice2 = Close[0] - tp2Distance;
+            
+            // Calculate position size based on risk
+            double riskAmount = Account.Get(AccountItem.CashValue, Instrument.MasterInstrument.Currency) * (RiskPercentage / 100.0);
+            double riskPips = Math.Abs(stopLossPrice - Close[0]);
+            double tickValue = Instrument.MasterInstrument.PointValue * TickSize;
+            int quantity = (int)Math.Floor(riskAmount / (riskPips * tickValue));
+            
+            // Ensure minimum quantity
+            quantity = Math.Max(1, quantity);
+            
+            // Enter the position
+            EnterShort(quantity, reason);
+            
+            // Update state variables
+            inShort = true;
+            entryPrice = Close[0];
+            entryBar = CurrentBar;
+            tradeBarsSinceEntry = 0;
+            
+            // Draw entry indicators
+            Draw.TriangleDown(this, "ShortEntry_" + CurrentBar, false, 0, High[0] + (2 * atrValues[0]), Brushes.Crimson);
+            Draw.Text(this, "ShortEntryText_" + CurrentBar, reason, 0, High[0] + (3 * atrValues[0]), Brushes.White);
+            
+            // Draw stop loss
+            Draw.Line(this, "StopLoss_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Red, DashStyleHelper.Solid, 2);
+            Draw.Text(this, "StopLossText_" + CurrentBar, "SL", 0, stopLossPrice, Brushes.Red);
+            
+            // Draw take profits
+            Draw.Line(this, "TP1_" + CurrentBar, false, 0, takeProfitPrice1, 10, takeProfitPrice1, Brushes.Green, DashStyleHelper.Dash, 1);
+            Draw.Text(this, "TP1Text_" + CurrentBar, "TP1", 0, takeProfitPrice1, Brushes.Green);
+            
+            Draw.Line(this, "TP2_" + CurrentBar, false, 0, takeProfitPrice2, 10, takeProfitPrice2, Brushes.Green, DashStyleHelper.Dash, 1);
+            Draw.Text(this, "TP2Text_" + CurrentBar, "TP2", 0, takeProfitPrice2, Brushes.Green);
+        }
+        
         private void ManageExistingPositions()
         {
-            // Check for stop loss hit
-            if (inLongPosition)
+            if (!inLong && !inShort)
+                return;
+                
+            if (inLong)
             {
-                // For long positions, check if low price touched or crossed stop loss
+                tradeBarsSinceEntry++;
+                
+                // Exit rules for long positions
+                
+                // 1. Stop loss hit
                 if (Low[0] <= stopLossPrice)
                 {
-                    ExitLong(currentPositionQuantity, "StopLoss", stopLossPrice);
-                    Print("LONG Exit (Stop Loss): Price=" + stopLossPrice);
+                    ExitLong("StopLoss");
                     ResetPositionState();
+                    Draw.Text(this, "ExitText_" + CurrentBar, "SL Exit", 0, Low[0], Brushes.Red);
                     return;
                 }
                 
-                // Check for take profit 1 (exit partial position)
-                if (High[0] >= takeProfit1 && currentPositionQuantity > 1)
+                // 2. Take profit 1 hit (partial exit)
+                if (High[0] >= takeProfitPrice1 && tradeBarsSinceEntry > 1)
                 {
-                    int tpQuantity = currentPositionQuantity / 2;
-                    ExitLong(tpQuantity, "TP1", takeProfit1);
-                    currentPositionQuantity -= tpQuantity;
-                    Print("LONG Partial Exit (TP1): Price=" + takeProfit1 + ", Qty=" + tpQuantity);
+                    // Exit half the position at TP1
+                    ExitLong(Position.Quantity / 2);
+                    Draw.Text(this, "TP1Hit_" + CurrentBar, "TP1 Hit", 0, takeProfitPrice1, Brushes.Green);
                     
-                    // Move stop loss to break even for remaining position
+                    // Move stop loss to break even after TP1 is hit
                     stopLossPrice = entryPrice;
+                    Draw.Line(this, "NewStopLoss_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Orange, DashStyleHelper.Solid, 2);
                 }
                 
-                // Check for take profit 2 (exit remaining position)
-                if (High[0] >= takeProfit2 && currentPositionQuantity > 0)
+                // 3. Take profit 2 hit (exit remaining position)
+                if (High[0] >= takeProfitPrice2 && tradeBarsSinceEntry > 1)
                 {
-                    ExitLong(currentPositionQuantity, "TP2", takeProfit2);
-                    Print("LONG Final Exit (TP2): Price=" + takeProfit2 + ", Qty=" + currentPositionQuantity);
+                    ExitLong("TP2");
                     ResetPositionState();
-                }
-            }
-            else if (inShortPosition)
-            {
-                // For short positions, check if high price touched or crossed stop loss
-                if (High[0] >= stopLossPrice)
-                {
-                    ExitShort(currentPositionQuantity, "StopLoss", stopLossPrice);
-                    Print("SHORT Exit (Stop Loss): Price=" + stopLossPrice);
-                    ResetPositionState();
+                    Draw.Text(this, "TP2Hit_" + CurrentBar, "TP2 Hit", 0, takeProfitPrice2, Brushes.Green);
                     return;
                 }
                 
-                // Check for take profit 1 (exit partial position)
-                if (Low[0] <= takeProfit1 && currentPositionQuantity > 1)
+                // 4. Trailing stop based on recent structure
+                if (tradeBarsSinceEntry > 5)
                 {
-                    int tpQuantity = currentPositionQuantity / 2;
-                    ExitShort(tpQuantity, "TP1", takeProfit1);
-                    currentPositionQuantity -= tpQuantity;
-                    Print("SHORT Partial Exit (TP1): Price=" + takeProfit1 + ", Qty=" + tpQuantity);
+                    // Find the lowest low of the last 3 bars (simple trailing stop logic)
+                    double trailingStop = double.MaxValue;
+                    for (int i = 1; i <= 3; i++)
+                    {
+                        if (CurrentBar >= i)
+                            trailingStop = Math.Min(trailingStop, Low[i]);
+                    }
                     
-                    // Move stop loss to break even for remaining position
-                    stopLossPrice = entryPrice;
-                }
-                
-                // Check for take profit 2 (exit remaining position)
-                if (Low[0] <= takeProfit2 && currentPositionQuantity > 0)
-                {
-                    ExitShort(currentPositionQuantity, "TP2", takeProfit2);
-                    Print("SHORT Final Exit (TP2): Price=" + takeProfit2 + ", Qty=" + currentPositionQuantity);
-                    ResetPositionState();
+                    // Only move stop loss upward, never downward
+                    if (trailingStop > stopLossPrice && trailingStop < Close[0])
+                    {
+                        stopLossPrice = trailingStop;
+                        Draw.Line(this, "TrailStop_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Orange, DashStyleHelper.Dash, 2);
+                    }
                 }
             }
             
-            // Time-based exit (if position has been open too long)
-            if ((inLongPosition || inShortPosition) && barsSinceEntry > 20)
+            if (inShort)
             {
-                if (inLongPosition)
+                tradeBarsSinceEntry++;
+                
+                // Exit rules for short positions
+                
+                // 1. Stop loss hit
+                if (High[0] >= stopLossPrice)
                 {
-                    ExitLong(currentPositionQuantity, "TimeExit", Close[0]);
-                    Print("LONG Exit (Time): Price=" + Close[0]);
-                }
-                else
-                {
-                    ExitShort(currentPositionQuantity, "TimeExit", Close[0]);
-                    Print("SHORT Exit (Time): Price=" + Close[0]);
+                    ExitShort("StopLoss");
+                    ResetPositionState();
+                    Draw.Text(this, "ExitText_" + CurrentBar, "SL Exit", 0, High[0], Brushes.Red);
+                    return;
                 }
                 
-                ResetPositionState();
+                // 2. Take profit 1 hit (partial exit)
+                if (Low[0] <= takeProfitPrice1 && tradeBarsSinceEntry > 1)
+                {
+                    // Exit half the position at TP1
+                    ExitShort(Position.Quantity / 2);
+                    Draw.Text(this, "TP1Hit_" + CurrentBar, "TP1 Hit", 0, takeProfitPrice1, Brushes.Green);
+                    
+                    // Move stop loss to break even after TP1 is hit
+                    stopLossPrice = entryPrice;
+                    Draw.Line(this, "NewStopLoss_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Orange, DashStyleHelper.Solid, 2);
+                }
+                
+                // 3. Take profit 2 hit (exit remaining position)
+                if (Low[0] <= takeProfitPrice2 && tradeBarsSinceEntry > 1)
+                {
+                    ExitShort("TP2");
+                    ResetPositionState();
+                    Draw.Text(this, "TP2Hit_" + CurrentBar, "TP2 Hit", 0, takeProfitPrice2, Brushes.Green);
+                    return;
+                }
+                
+                // 4. Trailing stop based on recent structure
+                if (tradeBarsSinceEntry > 5)
+                {
+                    // Find the highest high of the last 3 bars (simple trailing stop logic)
+                    double trailingStop = double.MinValue;
+                    for (int i = 1; i <= 3; i++)
+                    {
+                        if (CurrentBar >= i)
+                            trailingStop = Math.Max(trailingStop, High[i]);
+                    }
+                    
+                    // Only move stop loss downward, never upward
+                    if (trailingStop < stopLossPrice && trailingStop > Close[0])
+                    {
+                        stopLossPrice = trailingStop;
+                        Draw.Line(this, "TrailStop_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Orange, DashStyleHelper.Dash, 2);
+                    }
+                }
             }
         }
         
         private void ResetPositionState()
         {
-            inLongPosition = false;
-            inShortPosition = false;
-            entryPrice = 0;
-            stopLossPrice = 0;
-            takeProfit1 = 0;
-            takeProfit2 = 0;
-            barsSinceEntry = 0;
-            currentPositionQuantity = 0;
+            inLong = false;
+            inShort = false;
+            entryPrice = 0.0;
+            stopLossPrice = 0.0;
+            takeProfitPrice1 = 0.0;
+            takeProfitPrice2 = 0.0;
+            tradeBarsSinceEntry = 0;
         }
-        #endregion
-
-        #region Visualization Methods
-        private void DrawMarketStructure()
-        {
-            // Clear previous drawings
-            ClearOutputWindow();
-            
-            // Draw active order blocks, FVGs, etc.
-            // This is already handled in the identification methods
-        }
+        
         #endregion
         
-        #region Strategy Parameters
-        [NinjaScriptProperty]
-        [Range(5, 50)]
+        #region Helper Methods
+        
+        private bool HasLiquiditySweepDown()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (liqSweepDownDetected[i]) return true;
+            }
+            return false;
+        }
+        
+        private bool HasLiquiditySweepUp()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (liqSweepUpDetected[i]) return true;
+            }
+            return false;
+        }
+        
+        private bool HasBreakOfStructureUp()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (bosUp[i]) return true;
+            }
+            return false;
+        }
+        
+        private bool HasBreakOfStructureDown()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (bosDown[i]) return true;
+            }
+            return false;
+        }
+        
+        private bool HasBullishOrderBlock()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (obBullish[i]) return true;
+            }
+            return false;
+        }
+        
+        private bool HasBearishOrderBlock()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (obBearish[i]) return true;
+            }
+            return false;
+        }
+        
+        private bool HasBullishFVG()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (fvgBullish[i]) return true;
+            }
+            return false;
+        }
+        
+        private bool HasBearishFVG()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                if (CurrentBar < i) return false;
+                if (fvgBearish[i]) return true;
+            }
+            return false;
+        }
+        
+        #endregion
+        
+        #region Drawing and Visualization
+        
+        private void DrawLevels()
+        {
+            // This method can be expanded to draw additional levels or indicators
+            // for visualization purposes. Most drawing is already done in the
+            // respective component methods.
+        }
+        
+        #endregion
+        
+        #region Properties
+        
         [Display(Name = "Lookback Period", Description = "Number of bars to look back for swing points", Order = 1, GroupName = "Strategy Parameters")]
+        [Range(10, 200)]
         public int LookbackPeriod
         {
             get { return lookbackPeriod; }
             set { lookbackPeriod = value; }
         }
         
-        [NinjaScriptProperty]
-        [Range(0.5, 3.0)]
-        [Display(Name = "ATR Multiplier", Description = "ATR multiplier for sweep detection", Order = 2, GroupName = "Strategy Parameters")]
-        public double AtrMultiplier
-        {
-            get { return atrMultiplier; }
-            set { atrMultiplier = value; }
-        }
-        
-        [NinjaScriptProperty]
+        [Display(Name = "Risk Percentage", Description = "Percentage of account to risk per trade", Order = 2, GroupName = "Strategy Parameters")]
         [Range(0.1, 5.0)]
-        [Display(Name = "Risk Percentage", Description = "Risk percentage per trade", Order = 3, GroupName = "Strategy Parameters")]
         public double RiskPercentage
         {
             get { return riskPercentage; }
             set { riskPercentage = value; }
         }
         
-        [NinjaScriptProperty]
-        [Range(50, 300)]
-        [Display(Name = "Take Profit 1 %", Description = "First take profit as percentage of risk", Order = 4, GroupName = "Strategy Parameters")]
-        public double TakeProfit1Percentage
+        [Display(Name = "ATR Multiplier", Description = "Multiplier for ATR to set stop buffer", Order = 3, GroupName = "Strategy Parameters")]
+        [Range(0.1, 3.0)]
+        public double ATRMultiplier
         {
-            get { return takeProfit1Percentage; }
-            set { takeProfit1Percentage = value; }
+            get { return atrMultiplier; }
+            set { atrMultiplier = value; }
         }
         
-        [NinjaScriptProperty]
-        [Range(100, 500)]
-        [Display(Name = "Take Profit 2 %", Description = "Second take profit as percentage of risk", Order = 5, GroupName = "Strategy Parameters")]
-        public double TakeProfit2Percentage
+        [Display(Name = "Bars Required for High", Description = "Number of bars to confirm a swing high", Order = 4, GroupName = "Strategy Parameters")]
+        [Range(1, 10)]
+        public int BarsRequiredToTradeHigh
         {
-            get { return takeProfit2Percentage; }
-            set { takeProfit2Percentage = value; }
+            get { return barsRequiredToTradeHigh; }
+            set { barsRequiredToTradeHigh = value; }
         }
         
-        [NinjaScriptProperty]
-        [Display(Name = "Use Higher TF Liquidity", Description = "Consider higher timeframe liquidity levels", Order = 6, GroupName = "Strategy Parameters")]
-        public bool UseHigherTimeframeLiquidity
+        [Display(Name = "Bars Required for Low", Description = "Number of bars to confirm a swing low", Order = 5, GroupName = "Strategy Parameters")]
+        [Range(1, 10)]
+        public int BarsRequiredToTradeLow
         {
-            get { return useHigherTimeframeLiquidity; }
-            set { useHigherTimeframeLiquidity = value; }
+            get { return barsRequiredToTradeLow; }
+            set { barsRequiredToTradeLow = value; }
         }
         
-        [NinjaScriptProperty]
-        [Display(Name = "Use EQ Confluence", Description = "Require price to be at a discount/premium to EQ", Order = 7, GroupName = "Strategy Parameters")]
-        public bool UseEQConfluence
-        {
-            get { return useEQConfluence; }
-            set { useEQConfluence = value; }
-        }
-        
-        [NinjaScriptProperty]
-        [Display(Name = "Use FVG Confirmation", Description = "Require FVG fill for confirmation", Order = 8, GroupName = "Strategy Parameters")]
-        public bool UseFVGConfirmation
-        {
-            get { return useFVGConfirmation; }
-            set { useFVGConfirmation = value; }
-        }
-        
-        [NinjaScriptProperty]
-        [Display(Name = "Use Order Block Entry", Description = "Require order block touch for entry", Order = 9, GroupName = "Strategy Parameters")]
-        public bool UseOrderBlockEntry
-        {
-            get { return useOrderBlockEntry; }
-            set { useOrderBlockEntry = value; }
-        }
         #endregion
     }
 }
