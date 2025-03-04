@@ -35,6 +35,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double atrMultiplier = 0.5;
         private int barsRequiredToTradeHigh = 2;
         private int barsRequiredToTradeLow = 2;
+        private bool useFixedTickStop = true;
+        private int fixedTickStopSize = 50;
         
         // Indicators
         private ATR atrIndicator;
@@ -713,7 +715,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             
             // Define stop loss level - below the recent sweep
-            stopLossPrice = sweepLow - (ATRMultiplier * atrValues[0]);
+            double initialStop = sweepLow - (ATRMultiplier * atrValues[0]);
+            
+            // Add fixed 50 tick stop loss protection
+            double fixedStopDistance = 50 * TickSize;
+            double fixedStopPrice = Close[0] - fixedStopDistance;
+            
+            // Use the tighter of the two stops
+            stopLossPrice = Math.Max(initialStop, fixedStopPrice);
+            
+            Print("Long Entry at " + Close[0] + " - Initial Stop: " + initialStop + " - Fixed Stop: " + fixedStopPrice + " - Final Stop: " + stopLossPrice);
             
             // Calculate take profit levels based on surrounding liquidity levels
             double tp1Distance = (Close[0] - stopLossPrice) * 1.5; // 1.5:1 RR for first TP
@@ -775,7 +786,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             
             // Define stop loss level - above the recent sweep
-            stopLossPrice = sweepHigh + (ATRMultiplier * atrValues[0]);
+            double initialStop = sweepHigh + (ATRMultiplier * atrValues[0]);
+            
+            // Add fixed 50 tick stop loss protection
+            double fixedStopDistance = 50 * TickSize;
+            double fixedStopPrice = Close[0] + fixedStopDistance;
+            
+            // Use the tighter of the two stops
+            stopLossPrice = Math.Min(initialStop, fixedStopPrice);
+            
+            Print("Short Entry at " + Close[0] + " - Initial Stop: " + initialStop + " - Fixed Stop: " + fixedStopPrice + " - Final Stop: " + stopLossPrice);
             
             // Calculate take profit levels based on surrounding liquidity levels
             double tp1Distance = (stopLossPrice - Close[0]) * 1.5; // 1.5:1 RR for first TP
@@ -870,12 +890,27 @@ namespace NinjaTrader.NinjaScript.Strategies
                             trailingStop = Math.Min(trailingStop, Low[i]);
                     }
                     
+                    // Make sure trailing stop isn't too far from current price
+                    double maxTrailDistance = Math.Min(Close[0] - entryPrice, 50 * TickSize);
+                    if (Close[0] - trailingStop > maxTrailDistance)
+                    {
+                        trailingStop = Close[0] - maxTrailDistance;
+                    }
+                    
                     // Only move stop loss upward, never downward
                     if (trailingStop > stopLossPrice && trailingStop < Close[0])
                     {
                         stopLossPrice = trailingStop;
                         Draw.Line(this, "TrailStop_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Orange, DashStyleHelper.Dash, 2);
                     }
+                }
+                
+                // Emergency stop loss - ensure stop is never more than 50 ticks away
+                double emergencyStop = entryPrice - (fixedTickStopSize * TickSize);
+                if (stopLossPrice < emergencyStop)
+                {
+                    stopLossPrice = emergencyStop;
+                    Draw.Line(this, "EmergencyStop_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Red, DashStyleHelper.Solid, 2);
                 }
             }
             
@@ -926,12 +961,27 @@ namespace NinjaTrader.NinjaScript.Strategies
                             trailingStop = Math.Max(trailingStop, High[i]);
                     }
                     
+                    // Make sure trailing stop isn't too far from current price
+                    double maxTrailDistance = Math.Min(entryPrice - Close[0], 50 * TickSize);
+                    if (trailingStop - Close[0] > maxTrailDistance)
+                    {
+                        trailingStop = Close[0] + maxTrailDistance;
+                    }
+                    
                     // Only move stop loss downward, never upward
                     if (trailingStop < stopLossPrice && trailingStop > Close[0])
                     {
                         stopLossPrice = trailingStop;
                         Draw.Line(this, "TrailStop_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Orange, DashStyleHelper.Dash, 2);
                     }
+                }
+                
+                // Emergency stop loss - ensure stop is never more than 50 ticks away
+                double emergencyStop = entryPrice + (fixedTickStopSize * TickSize);
+                if (stopLossPrice > emergencyStop)
+                {
+                    stopLossPrice = emergencyStop;
+                    Draw.Line(this, "EmergencyStop_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Red, DashStyleHelper.Solid, 2);
                 }
             }
         }
@@ -1084,6 +1134,21 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             get { return barsRequiredToTradeLow; }
             set { barsRequiredToTradeLow = value; }
+        }
+        
+        [Display(Name = "Use Fixed Tick Stop", Description = "Enable fixed tick stop loss", Order = 6, GroupName = "Risk Management")]
+        public bool UseFixedTickStop
+        {
+            get { return useFixedTickStop; }
+            set { useFixedTickStop = value; }
+        }
+        
+        [Display(Name = "Fixed Tick Stop Size", Description = "Maximum stop loss distance in ticks", Order = 7, GroupName = "Risk Management")]
+        [Range(5, 200)]
+        public int FixedTickStopSize
+        {
+            get { return fixedTickStopSize; }
+            set { fixedTickStopSize = value; }
         }
         
         #endregion
