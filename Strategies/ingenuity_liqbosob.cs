@@ -25,22 +25,19 @@ using NinjaTrader.NinjaScript.DrawingTools;
 //This namespace holds Strategies in this folder and is required. Do not change it. 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public class IngenuityStrategyonlyliqbos : Strategy
+    public class Ingenuity_LiqBosOb_Fixed : Strategy
     {
         #region Variables and Parameters
         
         // Strategy Parameters
         private int lookbackPeriod = 50;
-        private double riskPercentage = 1.0;
         private double atrMultiplier = 0.5;
         private int barsRequiredToTradeHigh = 2;
         private int barsRequiredToTradeLow = 2;
         private bool useFixedTickStop = true;
         private int fixedTickStopSize = 50;
         private bool useLiqSweepBosObEntry = true;
-        private bool useLiqSweepBosFvgEntry = true;
-        private bool useUltimateConfluenceEntry = true;
-        private int doubleQtyForConfluence = 2;
+        private int fixedQuantity = 1; // Fixed quantity parameter
         
         // Indicators
         private ATR atrIndicator;
@@ -100,8 +97,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (State == State.SetDefaults)
             {
-                Description                    = @"Ingenuity Strategy based on Liquidity, BOS, OB, FVG, and EQ";
-                Name                           = "IngenuityStrategyClaude";
+                Description                    = @"Ingenuity Strategy with Liquidity + BOS + OB entry with fixed 1-contract sizing";
+                Name                           = "Ingenuity_LiqBosOb_Fixed";
                 Calculate                      = Calculate.OnBarClose;
                 EntriesPerDirection            = 1;
                 EntryHandling                  = EntryHandling.AllEntries;
@@ -120,16 +117,13 @@ namespace NinjaTrader.NinjaScript.Strategies
                 
                 // User-defined parameters
                 LookbackPeriod                 = 50;
-                RiskPercentage                 = 1.0;
                 ATRMultiplier                  = 0.5;
                 BarsRequiredToTradeHigh        = 2;
                 BarsRequiredToTradeLow         = 2;
                 UseFixedTickStop               = true;
                 FixedTickStopSize              = 50;
-                UseLiqSweepBosObEntry          = true;  // Only using this entry type
-                UseLiqSweepBosFvgEntry         = false; // Disabled
-                UseUltimateConfluenceEntry     = false; // Disabled
-                DoubleQtyForConfluence         = 2;
+                UseLiqSweepBosObEntry          = true;
+                FixedQuantity                  = 1; // Always use 1 contract
             }
             else if (State == State.Configure)
             {
@@ -183,9 +177,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Handle trading logic
             ManageExistingPositions();
             CheckForNewEntries();
-            
-            // Draw key levels for visualization
-            DrawLevels();
         }
         
         #region Strategy Component Methods
@@ -221,16 +212,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (High[2] > High[1] && High[2] > High[3] && High[2] > High[0] && High[2] > High[4])
             {
                 swingHighs.Add(new SwingPoint(CurrentBar - 2, High[2]));
-                
-                // Removed swing high visualization for cleaner chart
             }
             
             // Detecting swing lows (pivot lows)
             if (Low[2] < Low[1] && Low[2] < Low[3] && Low[2] < Low[0] && Low[2] < Low[4])
             {
                 swingLows.Add(new SwingPoint(CurrentBar - 2, Low[2]));
-                
-                // Removed swing low visualization for cleaner chart
             }
             
             // Cleanup old swing points to prevent memory issues
@@ -274,10 +261,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     liqSweepDownDetected[0] = true;
                     swingLow.Swept = true;
-                    
-                    // Removed liquidity sweep visualization
-                    
-                    // Break out of the loop after first sweep detection
                     break;
                 }
             }
@@ -290,10 +273,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     liqSweepUpDetected[0] = true;
                     swingHigh.Swept = true;
-                    
-                    // Removed liquidity sweep visualization
-                    
-                    // Break out of the loop after first sweep detection
                     break;
                 }
             }
@@ -319,14 +298,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (recentHighs.Count >= 2 && Close[0] > recentHighs[1].Price && bosUp[1] == false)
             {
                 bosUp[0] = true;
-                // Removed BOS visualization
             }
             
             // Bearish BOS - Current close breaks below the most recent higher low
             if (recentLows.Count >= 2 && Close[0] < recentLows[1].Price && bosDown[1] == false)
             {
                 bosDown[0] = true;
-                // Removed BOS visualization
             }
         }
         
@@ -352,8 +329,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                         obBullish[0] = true;
                         obHigh[0] = Math.Max(Open[i], Close[i]);
                         obLow[0] = Math.Min(Open[i], Close[i]);
-                        
-                        // Removed order block visualization
                         break;
                     }
                 }
@@ -373,8 +348,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                         obBearish[0] = true;
                         obHigh[0] = Math.Max(Open[i], Close[i]);
                         obLow[0] = Math.Min(Open[i], Close[i]);
-                        
-                        // Removed order block visualization
                         break;
                     }
                 }
@@ -399,8 +372,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 fvgBullish[0] = true;
                 fvgHigh[0] = Low[0];
                 fvgLow[0] = High[1];
-                
-                // Removed FVG visualization
             }
             
             // Bearish FVG - Current candle's high is below the previous candle's low
@@ -410,8 +381,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 fvgBearish[0] = true;
                 fvgHigh[0] = Low[1];
                 fvgLow[0] = High[0];
-                
-                // Removed FVG visualization
             }
         }
         
@@ -433,8 +402,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             // Calculate the 50% equilibrium level
             eqLevel[0] = lowestLow + ((highestHigh - lowestLow) * 0.5);
-            
-            // Removed EQ level visualization
         }
         
         #endregion
@@ -460,106 +427,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             if (canEnterLiqSweepBosOb)
             {
                 ExecuteEntry("LiqSweepBosOb");
-            }
-        }
-        
-        // Check UltimateConfluence condition without executing entry
-        private void CheckUltimateConfluenceCondition(ref bool canEnter)
-        {
-            canEnter = false;
-            
-            // For long entries
-            if (HasLiquiditySweepDown() && HasBreakOfStructureUp() && eqLevel[0] > 0)
-            {
-                // Price is near or below EQ (discount)
-                if (Close[0] <= eqLevel[0])
-                {
-                    // Check for OB or FVG confluence
-                    bool hasObConfluence = false;
-                    bool hasFvgConfluence = false;
-                    
-                    // Check for OB confluence
-                    if (HasBullishOrderBlock())
-                    {
-                        for (int i = 0; i < 20; i++)
-                        {
-                            if (CurrentBar - i < 0) break;
-                            
-                            if (obBullish[i] && Low[0] <= obHigh[i] && Close[0] >= obLow[i])
-                            {
-                                hasObConfluence = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Check for FVG confluence
-                    if (HasBullishFVG())
-                    {
-                        for (int i = 0; i < 20; i++)
-                        {
-                            if (CurrentBar - i < 0) break;
-                            
-                            if (fvgBullish[i] && Low[0] <= fvgHigh[i] && Low[0] >= fvgLow[i])
-                            {
-                                hasFvgConfluence = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (hasObConfluence || hasFvgConfluence)
-                    {
-                        canEnter = true;
-                    }
-                }
-            }
-            
-            // For short entries
-            if (!canEnter && HasLiquiditySweepUp() && HasBreakOfStructureDown() && eqLevel[0] > 0)
-            {
-                // Price is near or above EQ (premium)
-                if (Close[0] >= eqLevel[0])
-                {
-                    // Check for OB or FVG confluence
-                    bool hasObConfluence = false;
-                    bool hasFvgConfluence = false;
-                    
-                    // Check for OB confluence
-                    if (HasBearishOrderBlock())
-                    {
-                        for (int i = 0; i < 20; i++)
-                        {
-                            if (CurrentBar - i < 0) break;
-                            
-                            if (obBearish[i] && High[0] >= obLow[i] && Close[0] <= obHigh[i])
-                            {
-                                hasObConfluence = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Check for FVG confluence
-                    if (HasBearishFVG())
-                    {
-                        for (int i = 0; i < 20; i++)
-                        {
-                            if (CurrentBar - i < 0) break;
-                            
-                            if (fvgBearish[i] && High[0] >= fvgLow[i] && High[0] <= fvgHigh[i])
-                            {
-                                hasFvgConfluence = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (hasObConfluence || hasFvgConfluence)
-                    {
-                        canEnter = true;
-                    }
-                }
             }
         }
         
@@ -623,93 +490,19 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        // Check LiqSweepBosFvg condition without executing entry
-        private void CheckLiqSweepBosFvgCondition(ref bool canEnter)
-        {
-            canEnter = false;
-            
-            // Need a previous bullish FVG for a long trade
-            if (HasBullishFVG() && HasLiquiditySweepDown() && HasBreakOfStructureUp())
-            {
-                // Find the most recent bullish FVG
-                double fvgHighLevel = 0;
-                double fvgLowLevel = 0;
-                
-                for (int i = 0; i < 20; i++)
-                {
-                    if (CurrentBar - i < 0) break;
-                    
-                    if (fvgBullish[i])
-                    {
-                        fvgHighLevel = fvgHigh[i];
-                        fvgLowLevel = fvgLow[i];
-                        break;
-                    }
-                }
-                
-                // Price is filling the FVG
-                if (fvgHighLevel > 0 && fvgLowLevel > 0 && 
-                    Low[0] <= fvgHighLevel && Low[0] >= fvgLowLevel)
-                {
-                    canEnter = true;
-                }
-            }
-            
-            // Need a previous bearish FVG for a short trade
-            if (!canEnter && HasBearishFVG() && HasLiquiditySweepUp() && HasBreakOfStructureDown())
-            {
-                // Find the most recent bearish FVG
-                double fvgHighLevel = 0;
-                double fvgLowLevel = 0;
-                
-                for (int i = 0; i < 20; i++)
-                {
-                    if (CurrentBar - i < 0) break;
-                    
-                    if (fvgBearish[i])
-                    {
-                        fvgHighLevel = fvgHigh[i];
-                        fvgLowLevel = fvgLow[i];
-                        break;
-                    }
-                }
-                
-                // Price is filling the FVG
-                if (fvgHighLevel > 0 && fvgLowLevel > 0 && 
-                    High[0] >= fvgLowLevel && High[0] <= fvgHighLevel)
-                {
-                    canEnter = true;
-                }
-            }
-        }
-        
-        // Standard entry with normal quantity
         private void ExecuteEntry(string reason)
         {
             if (uptrend[0] || HasBreakOfStructureUp())
             {
-                ExecuteLongEntry(reason, 1);
+                ExecuteLongEntry(reason);
             }
             else if (downtrend[0] || HasBreakOfStructureDown())
             {
-                ExecuteShortEntry(reason, 1);
+                ExecuteShortEntry(reason);
             }
         }
         
-        // Entry with double quantity for ultimate confluence
-        private void ExecuteEntryWithConfluence(string reason)
-        {
-            if (uptrend[0] || HasBreakOfStructureUp())
-            {
-                ExecuteLongEntry(reason, DoubleQtyForConfluence);
-            }
-            else if (downtrend[0] || HasBreakOfStructureDown())
-            {
-                ExecuteShortEntry(reason, DoubleQtyForConfluence);
-            }
-        }
-        
-        private void ExecuteLongEntry(string reason, int quantityMultiplier)
+        private void ExecuteLongEntry(string reason)
         {
             // Find the most recent liquidity sweep for stop placement
             double sweepLow = 0;
@@ -738,27 +531,17 @@ namespace NinjaTrader.NinjaScript.Strategies
             stopLossPrice = Math.Max(initialStop, fixedStopPrice);
             
             Print("Long Entry at " + Close[0] + " - Initial Stop: " + initialStop + 
-                  " - Fixed Stop: " + fixedStopPrice + " - Final Stop: " + stopLossPrice + 
-                  " - Quantity Multiplier: " + quantityMultiplier);
+                  " - Fixed Stop: " + fixedStopPrice + " - Final Stop: " + stopLossPrice);
             
-            // Calculate take profit levels based on surrounding liquidity levels
+            // Calculate take profit levels based on R:R
             double tp1Distance = (Close[0] - stopLossPrice) * 1.5; // 1.5:1 RR for first TP
             double tp2Distance = (Close[0] - stopLossPrice) * 2.5; // 2.5:1 RR for second TP
             
             takeProfitPrice1 = Close[0] + tp1Distance;
             takeProfitPrice2 = Close[0] + tp2Distance;
             
-            // Calculate position size based on risk
-            double riskAmount = Account.Get(AccountItem.CashValue, Instrument.MasterInstrument.Currency) * (RiskPercentage / 100.0);
-            double riskPips = Math.Abs(Close[0] - stopLossPrice);
-            double tickValue = Instrument.MasterInstrument.PointValue * TickSize;
-            int quantity = (int)Math.Floor(riskAmount / (riskPips * tickValue));
-            
-            // Ensure minimum quantity and apply multiplier
-            quantity = Math.Max(1, quantity) * quantityMultiplier;
-            
-            // Enter the position
-            EnterLong(quantity, reason);
+            // Use fixed quantity of 1 contract instead of risk-based sizing
+            EnterLong(FixedQuantity, reason);
             
             // Update state variables
             inLong = true;
@@ -766,14 +549,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             entryBar = CurrentBar;
             tradeBarsSinceEntry = 0;
             
-            // Draw ENTRY indicator only
+            // Draw ENTRY indicator
             Draw.TriangleUp(this, "LongEntry_" + CurrentBar, false, 0, Low[0] - (2 * atrValues[0]), Brushes.LimeGreen);
             Draw.Text(this, "LongEntryText_" + CurrentBar, "ENTRY", 0, Low[0] - (3 * atrValues[0]), Brushes.White);
-            
-            // Removed stop loss and take profit visualizations
         }
         
-        private void ExecuteShortEntry(string reason, int quantityMultiplier)
+        private void ExecuteShortEntry(string reason)
         {
             // Find the most recent liquidity sweep for stop placement
             double sweepHigh = 0;
@@ -802,27 +583,17 @@ namespace NinjaTrader.NinjaScript.Strategies
             stopLossPrice = Math.Min(initialStop, fixedStopPrice);
             
             Print("Short Entry at " + Close[0] + " - Initial Stop: " + initialStop + 
-                  " - Fixed Stop: " + fixedStopPrice + " - Final Stop: " + stopLossPrice + 
-                  " - Quantity Multiplier: " + quantityMultiplier);
+                  " - Fixed Stop: " + fixedStopPrice + " - Final Stop: " + stopLossPrice);
             
-            // Calculate take profit levels based on surrounding liquidity levels
+            // Calculate take profit levels based on R:R
             double tp1Distance = (stopLossPrice - Close[0]) * 1.5; // 1.5:1 RR for first TP
             double tp2Distance = (stopLossPrice - Close[0]) * 2.5; // 2.5:1 RR for second TP
             
             takeProfitPrice1 = Close[0] - tp1Distance;
             takeProfitPrice2 = Close[0] - tp2Distance;
             
-            // Calculate position size based on risk
-            double riskAmount = Account.Get(AccountItem.CashValue, Instrument.MasterInstrument.Currency) * (RiskPercentage / 100.0);
-            double riskPips = Math.Abs(stopLossPrice - Close[0]);
-            double tickValue = Instrument.MasterInstrument.PointValue * TickSize;
-            int quantity = (int)Math.Floor(riskAmount / (riskPips * tickValue));
-            
-            // Ensure minimum quantity and apply multiplier
-            quantity = Math.Max(1, quantity) * quantityMultiplier;
-            
-            // Enter the position
-            EnterShort(quantity, reason);
+            // Use fixed quantity of 1 contract instead of risk-based sizing
+            EnterShort(FixedQuantity, reason);
             
             // Update state variables
             inShort = true;
@@ -830,20 +601,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             entryBar = CurrentBar;
             tradeBarsSinceEntry = 0;
             
-            // Draw ENTRY indicator for short - made more visible
+            // Draw ENTRY indicator for short
             Draw.TriangleDown(this, "ShortEntry_" + CurrentBar, false, 0, High[0] + (2 * atrValues[0]), Brushes.Crimson);
             Draw.Text(this, "ShortEntryText_" + CurrentBar, "ENTRY", 0, High[0] + (3 * atrValues[0]), Brushes.White);
-            
-            // Draw stop loss
-            Draw.Line(this, "StopLoss_" + CurrentBar, false, 0, stopLossPrice, 10, stopLossPrice, Brushes.Red, DashStyleHelper.Solid, 2);
-            Draw.Text(this, "StopLossText_" + CurrentBar, "SL", 0, stopLossPrice, Brushes.Red);
-            
-            // Draw take profits
-            Draw.Line(this, "TP1_" + CurrentBar, false, 0, takeProfitPrice1, 10, takeProfitPrice1, Brushes.Green, DashStyleHelper.Dash, 1);
-            Draw.Text(this, "TP1Text_" + CurrentBar, "TP1", 0, takeProfitPrice1, Brushes.Green);
-            
-            Draw.Line(this, "TP2_" + CurrentBar, false, 0, takeProfitPrice2, 10, takeProfitPrice2, Brushes.Green, DashStyleHelper.Dash, 1);
-            Draw.Text(this, "TP2Text_" + CurrentBar, "TP2", 0, takeProfitPrice2, Brushes.Green);
         }
         
         private void ManageExistingPositions()
@@ -916,7 +676,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (trailingStop > stopLossPrice && trailingStop < Close[0])
                     {
                         stopLossPrice = trailingStop;
-                        // Remove trailing stop visualization
                         Print("Trailing stop updated to " + stopLossPrice);
                     }
                 }
@@ -987,7 +746,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                     if (trailingStop < stopLossPrice && trailingStop > Close[0])
                     {
                         stopLossPrice = trailingStop;
-                        // Remove trailing stop visualization
                         Print("Trailing stop updated to " + stopLossPrice);
                     }
                 }
@@ -1009,12 +767,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         #endregion
         
         #region Helper Methods
-        
-        private void DrawLevels()
-        {
-            // All visualization is now focused on entries, exits, TPs and SLs for cleaner chart
-            // Trading-specific visuals are handled directly in the entry/exit methods
-        }
         
         private bool HasLiquiditySweepDown()
         {
@@ -1110,16 +862,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         
         [NinjaScriptProperty]
-        [Display(Name = "Risk Percentage", Description = "Percentage of account to risk per trade", Order = 2, GroupName = "Strategy Parameters")]
-        [Range(0.1, 5.0)]
-        public double RiskPercentage
-        {
-            get { return riskPercentage; }
-            set { riskPercentage = value; }
-        }
-        
-        [NinjaScriptProperty]
-        [Display(Name = "ATR Multiplier", Description = "Multiplier for ATR to set stop buffer", Order = 3, GroupName = "Strategy Parameters")]
+        [Display(Name = "ATR Multiplier", Description = "Multiplier for ATR to set stop buffer", Order = 2, GroupName = "Strategy Parameters")]
         [Range(0.1, 3.0)]
         public double ATRMultiplier
         {
@@ -1128,7 +871,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         
         [NinjaScriptProperty]
-        [Display(Name = "Bars Required for High", Description = "Number of bars to confirm a swing high", Order = 4, GroupName = "Strategy Parameters")]
+        [Display(Name = "Bars Required for High", Description = "Number of bars to confirm a swing high", Order = 3, GroupName = "Strategy Parameters")]
         [Range(1, 10)]
         public int BarsRequiredToTradeHigh
         {
@@ -1137,7 +880,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         
         [NinjaScriptProperty]
-        [Display(Name = "Bars Required for Low", Description = "Number of bars to confirm a swing low", Order = 5, GroupName = "Strategy Parameters")]
+        [Display(Name = "Bars Required for Low", Description = "Number of bars to confirm a swing low", Order = 4, GroupName = "Strategy Parameters")]
         [Range(1, 10)]
         public int BarsRequiredToTradeLow
         {
@@ -1146,7 +889,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         
         [NinjaScriptProperty]
-        [Display(Name = "Use Fixed Tick Stop", Description = "Enable fixed tick stop loss", Order = 6, GroupName = "Risk Management")]
+        [Display(Name = "Use Fixed Tick Stop", Description = "Enable fixed tick stop loss", Order = 5, GroupName = "Risk Management")]
         public bool UseFixedTickStop
         {
             get { return useFixedTickStop; }
@@ -1154,7 +897,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         
         [NinjaScriptProperty]
-        [Display(Name = "Fixed Tick Stop Size", Description = "Maximum stop loss distance in ticks", Order = 7, GroupName = "Risk Management")]
+        [Display(Name = "Fixed Tick Stop Size", Description = "Maximum stop loss distance in ticks", Order = 6, GroupName = "Risk Management")]
         [Range(5, 200)]
         public int FixedTickStopSize
         {
@@ -1163,32 +906,20 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         
         [NinjaScriptProperty]
-        [Display(Name = "Use LiqSweepBosOb Entry", Description = "Enable liquidity sweep + BOS + OB entry setup (only entry method used)", Order = 8, GroupName = "Entry Methods")]
+        [Display(Name = "Use LiqSweepBosOb Entry", Description = "Enable liquidity sweep + BOS + OB entry setup", Order = 7, GroupName = "Entry Methods")]
         public bool UseLiqSweepBosObEntry
         {
             get { return useLiqSweepBosObEntry; }
             set { useLiqSweepBosObEntry = value; }
         }
         
-        [Browsable(false)] // Hide this property since it's not used
-        public bool UseLiqSweepBosFvgEntry
+        [NinjaScriptProperty]
+        [Display(Name = "Fixed Quantity", Description = "Fixed number of contracts to trade (always set to 1)", Order = 8, GroupName = "Position Sizing")]
+        [Range(1, 1)]
+        public int FixedQuantity
         {
-            get { return useLiqSweepBosFvgEntry; }
-            set { useLiqSweepBosFvgEntry = value; }
-        }
-        
-        [Browsable(false)] // Hide this property since it's not used
-        public bool UseUltimateConfluenceEntry
-        {
-            get { return useUltimateConfluenceEntry; }
-            set { useUltimateConfluenceEntry = value; }
-        }
-        
-        [Browsable(false)] // Hide this property since it's not used
-        public int DoubleQtyForConfluence
-        {
-            get { return doubleQtyForConfluence; }
-            set { doubleQtyForConfluence = value; }
+            get { return fixedQuantity; }
+            set { fixedQuantity = Math.Max(1, Math.Min(value, 1)); } // Force value to be exactly 1
         }
         
         #endregion
