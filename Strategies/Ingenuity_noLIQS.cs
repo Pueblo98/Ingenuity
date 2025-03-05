@@ -1151,6 +1151,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Properties
         
+        [NinjaScriptProperty]
         [Display(Name = "Lookback Period", Description = "Number of bars to look back for swing points", Order = 1, GroupName = "Strategy Parameters")]
         [Range(10, 200)]
         public int LookbackPeriod
@@ -1159,6 +1160,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { lookbackPeriod = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Risk Percentage", Description = "Percentage of account to risk per trade", Order = 2, GroupName = "Strategy Parameters")]
         [Range(0.1, 5.0)]
         public double RiskPercentage
@@ -1167,6 +1169,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { riskPercentage = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "ATR Multiplier", Description = "Multiplier for ATR to set stop buffer", Order = 3, GroupName = "Strategy Parameters")]
         [Range(0.1, 3.0)]
         public double ATRMultiplier
@@ -1175,6 +1178,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { atrMultiplier = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Bars Required for High", Description = "Number of bars to confirm a swing high", Order = 4, GroupName = "Strategy Parameters")]
         [Range(1, 10)]
         public int BarsRequiredToTradeHigh
@@ -1183,6 +1187,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { barsRequiredToTradeHigh = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Bars Required for Low", Description = "Number of bars to confirm a swing low", Order = 5, GroupName = "Strategy Parameters")]
         [Range(1, 10)]
         public int BarsRequiredToTradeLow
@@ -1191,6 +1196,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { barsRequiredToTradeLow = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Use Fixed Tick Stop", Description = "Enable fixed tick stop loss", Order = 6, GroupName = "Risk Management")]
         public bool UseFixedTickStop
         {
@@ -1198,6 +1204,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { useFixedTickStop = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Fixed Tick Stop Size", Description = "Maximum stop loss distance in ticks", Order = 7, GroupName = "Risk Management")]
         [Range(5, 200)]
         public int FixedTickStopSize
@@ -1206,6 +1213,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { fixedTickStopSize = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Use LiqSweepBosOb Entry", Description = "Enable liquidity sweep + BOS + OB entry setup", Order = 8, GroupName = "Entry Methods")]
         public bool UseLiqSweepBosObEntry
         {
@@ -1213,6 +1221,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { useLiqSweepBosObEntry = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Use LiqSweepBosFvg Entry", Description = "Enable liquidity sweep + BOS + FVG entry setup", Order = 9, GroupName = "Entry Methods")]
         public bool UseLiqSweepBosFvgEntry
         {
@@ -1220,6 +1229,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { useLiqSweepBosFvgEntry = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Use Ultimate Confluence Entry", Description = "Enable the highest confluence entry setup", Order = 10, GroupName = "Entry Methods")]
         public bool UseUltimateConfluenceEntry
         {
@@ -1227,6 +1237,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             set { useUltimateConfluenceEntry = value; }
         }
         
+        [NinjaScriptProperty]
         [Display(Name = "Double Qty For Confluence", Description = "Quantity multiplier for Ultimate Confluence setups", Order = 11, GroupName = "Position Sizing")]
         [Range(1, 10)]
         public int DoubleQtyForConfluence
